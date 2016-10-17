@@ -14,7 +14,8 @@
 我们开启的线程使用kvo，这是个异步的过程，需要等待回调，而子线程默认不开启runloop，这样线程就会运行完代码后立即退出。因此我们代码的实现里是使用了一个runloop来保证线程不死。  
 >The purpose of a run loop is to keep your thread busy when there is work to do and put your thread to sleep when there is none.
 
-大概代码如下所示
+大概代码如下所示    
+
     - (instancetype)init{
         ...
         listenerThread = [[NSThread alloc] initWithTarget: self selector: @selector(listenerThreadMain) object: nil];
