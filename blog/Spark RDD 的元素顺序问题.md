@@ -61,26 +61,25 @@ slice 方法是定义在 object ParallelCollectionRDD 里的方法
             }.toSeq
         }
     }
-可见仍然是按照 seq 的顺序，从前往后将每 (length / numSlices) 个元素放入一个 Partition 中的(最后一个分区可能没有 length/numSlices 个，放到最后一个)。
+可见仍然是按照 seq 的顺序，从前往后将每 (length / numSlices) 个元素放入一个 Partition 中的(最后一个分区可能没有 length/numSlices 个，放到最后一个元素)。
 
 ### RDD操作时的顺序
-我们再来看 RDD 操作时给数据顺序带来的影响，先考虑不带 Shuffle 的转换操作以及执行操作。  
+我们再来看 RDD 操作时给数据顺序带来的影响，先考虑不带 Shuffle 的操作。  
 
-转换操作比较好理解，只要不发生数据 Shuffle 的过程，在每个分区上数据总是一个个顺序处理的。比如 map 操作和 mapPartitions 操作：(f) => Iterator(f), mapPartitions(f) => f(Iterator), 无非是迭代器放在处理函数外面还是里边的区别。其他的算子也都大同小异。  
+常用的转换操作比较好理解，只要不发生数据 Shuffle 的过程，在每个分区上数据总是一个个顺序处理的。比如 map 操作和 mapPartitions 操作：(f) => Iterator(f), mapPartitions(f) => f(Iterator), 无非是迭代器放在处理函数外面还是里边的区别。其他的算子也都大同小异。  
 
-coalesce(numPartitions, shuffle) 比较复杂，其第二个参数决定会不会发生 Shuffle ，有 Shuffle 的情况下面会说，而 shuffle == flase 的情况呢，会将 parentRDD 的 partition 个数进行调整(减少)。
+coalesce(numPartitions, shuffle) 比较复杂，其第二个参数决定会不会发生 Shuffle 。有 Shuffle 的情况下面会说，而 shuffle == flase 的情况呢，会将 parentRDD 的 partition 个数进行调整(减少)。parentRDD 中哪些 RDD 会合并到一起，coalesce 算子默认会用到 DefaultPartitionCoalescer 来决定，这其中有个很复杂的算法决定，要考虑 partition 中元素个数，还要考虑数据本地性的问题，总之，合并的分区顺序很可能会打乱。比如原分区按数据顺序标号依次为 1,2,3 。 coalesce 后可能 1 跟 3 在一起组成一个新分区，2 独自组成一个。这样数据的顺序应该是发生了改变的，可如果把结果 collect 打印出来，仍然是按着源数据的顺序，我猜想可能是不带 Shuffle 的 coalesce 类似于 union 算子，保留了原始 RDD 的边界，而 Spark 又记录了 RDD 的 lineage ，从而能够把原数据的顺序还原回来。
 
 
 ### Shuffle带来的影响
 发生 Shuffle 后，数据可就打乱了，自然也无顺序可言了，写了个例子验证一下：  
 
     val num = List(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
-    val reduce = sc.parallelize(num, 4).map(kv => (kv, 1)).groupByKey().map(kv => kv._ 1).collect
-打印出 reduce 的结果是： 4, 8, 12, 1, 5, 9, 2, 6, 10, 3, 7, 11  
+    val reduce = sc.parallelize(num, 4).map(kv => (kv, 1)).groupByKey().map(kv => kv._ 1).collect  
+
+打印出 reduce 的结果是： (4, 8, 12, 1, 9, 5, 6, 10, 2, 11, 3, 7)  
 很显然由于给每个分区的数据进行了重分区(HashPartitioner)，每个分区计算完收集起来的结果也是跟之前顺序不一样的了。  
 
 由此可见，只要 RDD 计算没有 Shuffle 的过程，我们就可以认为源数据的顺序没有打乱。我做比对的结果也证明了这一点，在读取源文件数据并分区后，做了一系列处理(没有Shuffle)，最后 coalesce(1, false) ，输出为文件，顺序完全跟之前的一致！  
 
-注意：本文探讨的都是相对常见、直观一些的处理流程，文字也不够严谨，一些复杂的场景比如 RDDa.join(RDDb) ，可能存在没有 Shuffle 但有 map-side Combine 的情况，其实也会打乱之前的顺序。其实研究数据顺序并不是目的，工程场景中也很少遇到要明确顺序的情况，主要是为了从另一个角度思考加深对 Spark 计算原理的理解。
-
-#### 参考文档
+注意：本文探讨的都是一些常用且处理顺序有意义的流程，文字也不够严谨，一些复杂的场景比如 RDDa.join(RDDb) ，可能存在没有 Shuffle 但有 map-side Combine 的情况，其实也会打乱之前的顺序。其实研究数据顺序并不是目的，工程场景中也很少遇到要明确顺序的情况，主要是为了从另一个角度思考问题来加深对 Spark 计算原理的理解。
